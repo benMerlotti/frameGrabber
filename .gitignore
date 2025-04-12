@@ -1,0 +1,26 @@
+# Ignore Python bytecode files
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+
+# Ignore environment files
+.env
+
+# Ignore editor and IDE configurations
+.vscode/
+.idea/
+
+# Ignore temporary files
+*.swp
+
+# Ignore any video files or media
+*.mp4
+*.avi
+*.mov
+
+# Ignore output directory (e.g., where you save frames)
+output/
+
+# Ignore logs
+*.log
