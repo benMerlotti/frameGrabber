@@ -2,9 +2,15 @@ import sys
 import os
 import threading
 import time
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QPushButton, QProgressBar, QComboBox, QLineEdit, QFileDialog, QMessageBox
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QPushButton, QProgressBar, QComboBox, QFileDialog, QMessageBox
+from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from frame_grabber import extract_frames
+
+# Create a signals class to communicate between threads
+class WorkerSignals(QObject):
+    progress = pyqtSignal(int, int, float)
+    finished = pyqtSignal(str, str)
+    error = pyqtSignal(str)
 
 class VideoScriptApp(QWidget):
     def __init__(self):
@@ -22,6 +28,12 @@ class VideoScriptApp(QWidget):
         
         # Processing thread
         self.processing_thread = None
+        
+        # Create signals for thread communication
+        self.signals = WorkerSignals()
+        self.signals.progress.connect(self.update_progress)
+        self.signals.finished.connect(self.show_completion_message)
+        self.signals.error.connect(self.show_error)
         
         self.init_ui()
     
@@ -145,11 +157,9 @@ class VideoScriptApp(QWidget):
             
             if total_videos == 0:
                 self.status_label.setText("No video files found in the selected folder")
-                self.run_button.setEnabled(True)
-                self.cancel_button.setEnabled(False)
+                self.signals.finished.emit("Warning", "No video files found in the selected folder")
                 return
 
-            self.loading_bar.setMaximum(total_videos)
             processed_videos = 0
             start_time = time.time()
 
@@ -158,8 +168,9 @@ class VideoScriptApp(QWidget):
                 if self.cancel_flag:
                     break
 
-                # Update status
-                self.status_label.setText(f"Processing: {filename}")
+                # Use signals to update the status label from the main thread
+                # This will be done in the update_progress slot
+                
                 filepath = os.path.join(self.folder_path, filename)
 
                 # Call the extract_frames function from frame_grabber.py
@@ -167,18 +178,21 @@ class VideoScriptApp(QWidget):
 
                 processed_videos += 1
 
-                # Update progress on the main thread
-                self.update_progress(processed_videos, total_videos, start_time)
+                # Emit the progress signal to update UI in the main thread
+                self.signals.progress.emit(processed_videos, total_videos, start_time)
 
             if not self.cancel_flag:
-                self.show_completion_message("Success", "All videos processed successfully!")
+                self.signals.finished.emit("Success", "All videos processed successfully!")
             else:
-                self.show_completion_message("Cancelled", "Process was cancelled.")
+                self.signals.finished.emit("Cancelled", "Process was cancelled.")
         
         except Exception as e:
-            self.show_completion_message("Error", f"An error occurred: {str(e)}")
+            self.signals.error.emit(f"An error occurred: {str(e)}")
 
     def update_progress(self, processed_videos, total_videos, start_time):
+        # Update UI components with progress information
+        self.status_label.setText(f"Processing: {processed_videos} of {total_videos} videos")
+        self.loading_bar.setMaximum(total_videos)
         self.loading_bar.setValue(processed_videos)
         
         # Calculate the percentage of completion
@@ -204,6 +218,8 @@ class VideoScriptApp(QWidget):
 
     def show_error(self, message):
         QMessageBox.critical(self, "Error", message)
+        self.run_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
 
     def cancel_process(self):
         self.cancel_flag = True
