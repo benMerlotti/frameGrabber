@@ -1,90 +1,216 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox
+import sys
 import os
-from frame_grabber import process_directory
+import threading
+import time
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QPushButton, QProgressBar, QComboBox, QLineEdit, QFileDialog, QMessageBox
+from PyQt5.QtCore import Qt
+from frame_grabber import extract_frames
 
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import os
-from frame_grabber import process_directory
+class VideoScriptApp(QWidget):
+    def __init__(self):
+        super().__init__()
 
-class VideoScriptApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Video Script App")
+        self.setWindowTitle("Video Frame Grabber")
+        self.setGeometry(100, 100, 500, 450)  # Window size
         
-        # Set window size
-        self.root.geometry("400x350")
-        
-        # Add labels and buttons
-        self.label = tk.Label(root, text="Select a Folder with Video Files")
-        self.label.pack(pady=10)
-
-        # Folder selection button
-        self.select_folder_button = tk.Button(root, text="Browse Input Folder", command=self.select_folder)
-        self.select_folder_button.pack(pady=10)
-
-        # Output folder label and button
-        self.output_label = tk.Label(root, text="Select Output Folder")
-        self.output_label.pack(pady=10)
-        self.select_output_button = tk.Button(root, text="Browse Output Folder", command=self.select_output_folder)
-        self.select_output_button.pack(pady=10)
-
-        # Dropdown for selecting number of frames
-        self.frames_label = tk.Label(root, text="Select Number of Frames to Extract")
-        self.frames_label.pack(pady=10)
-        
-        # Dropdown options for number of frames
-        self.frames_options = [1, 3, 5, 10, 20]
-        self.selected_frames = tk.IntVar()
-        self.selected_frames.set(self.frames_options[1])  # Default to 3 frames
-
-        self.frames_dropdown = tk.OptionMenu(root, self.selected_frames, *self.frames_options)
-        self.frames_dropdown.pack(pady=10)
-
-        # Run Script Button
-        self.run_button = tk.Button(root, text="Run Script", command=self.run_script, state=tk.DISABLED)
-        self.run_button.pack(pady=10)
-
-        # Folder path variables
+        # Initialize folder paths
         self.folder_path = ""
         self.output_folder_path = ""
+        
+        # Cancel flag
+        self.cancel_flag = False
+        
+        # Processing thread
+        self.processing_thread = None
+        
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # Label for folder selection
+        self.label = QLabel("Select a Folder with Video Files")
+        layout.addWidget(self.label)
+
+        # Browse button for input folder
+        self.select_folder_button = QPushButton("Browse Input Folder")
+        self.select_folder_button.clicked.connect(self.select_folder)
+        layout.addWidget(self.select_folder_button)
+
+        # Label for selected folder
+        self.selected_folder_label = QLabel("No folder selected")
+        layout.addWidget(self.selected_folder_label)
+
+        # Label and button for output folder
+        self.output_label = QLabel("Select Output Folder")
+        layout.addWidget(self.output_label)
+        
+        self.select_output_button = QPushButton("Browse Output Folder")
+        self.select_output_button.clicked.connect(self.select_output_folder)
+        layout.addWidget(self.select_output_button)
+
+        # Label for selected output folder
+        self.selected_output_folder_label = QLabel("No output folder selected")
+        layout.addWidget(self.selected_output_folder_label)
+
+        # Dropdown for selecting number of frames
+        self.frames_label = QLabel("Select Number of Frames to Extract")
+        layout.addWidget(self.frames_label)
+
+        self.frames_options = [1, 3, 5, 10, 20]
+        self.selected_frames = QComboBox()
+        self.selected_frames.addItems([str(option) for option in self.frames_options])
+        self.selected_frames.setCurrentIndex(1)  # Default to 3 frames
+        layout.addWidget(self.selected_frames)
+
+        # Run Script Button
+        self.run_button = QPushButton("Run Script")
+        self.run_button.clicked.connect(self.run_script)
+        self.run_button.setEnabled(False)  # Initially disabled
+        layout.addWidget(self.run_button)
+
+        # Cancel Button
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.cancel_process)
+        self.cancel_button.setEnabled(False)  # Initially disabled
+        layout.addWidget(self.cancel_button)
+
+        # Status label
+        self.status_label = QLabel("")
+        layout.addWidget(self.status_label)
+
+        # Loading bar
+        self.loading_bar = QProgressBar()
+        layout.addWidget(self.loading_bar)
+
+        # Percentage label
+        self.percentage_label = QLabel("0%")
+        layout.addWidget(self.percentage_label)
+
+        # Estimated time label
+        self.estimated_time_label = QLabel("Estimated Time Remaining: N/A")
+        layout.addWidget(self.estimated_time_label)
+
+        self.setLayout(layout)
 
     def select_folder(self):
-        # Open folder dialog to select input folder
-        folder = filedialog.askdirectory()
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
             self.folder_path = folder
-            self.label.config(text=f"Selected Input Folder: {folder}")
-            self.run_button.config(state=tk.NORMAL)  # Enable the run button once a folder is selected
+            self.selected_folder_label.setText(f"Folder: {os.path.basename(folder)}")
+            self.update_run_button_state()
 
     def select_output_folder(self):
-        # Open folder dialog to select output folder
-        output_folder = filedialog.askdirectory()
+        output_folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
         if output_folder:
             self.output_folder_path = output_folder
-            self.output_label.config(text=f"Selected Output Folder: {output_folder}")
-    
+            self.selected_output_folder_label.setText(f"Folder: {os.path.basename(output_folder)}")
+            self.update_run_button_state()
+
+    def update_run_button_state(self):
+        # Enable run button only if both input and output folders are selected
+        if self.folder_path and self.output_folder_path:
+            self.run_button.setEnabled(True)
+        else:
+            self.run_button.setEnabled(False)
+
     def run_script(self):
         if not self.folder_path:
-            messagebox.showerror("Error", "Please select an input folder first!")
+            self.show_error("Please select an input folder first!")
             return
-        
         if not self.output_folder_path:
-            messagebox.showerror("Error", "Please select an output folder!")
+            self.show_error("Please select an output folder!")
             return
+
+        self.cancel_flag = False
+        self.run_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+
+        num_frames = int(self.selected_frames.currentText())
         
-        # Get the number of frames selected from the dropdown
-        num_frames = self.selected_frames.get()
-        
+        # Start processing in a separate thread to keep UI responsive
+        self.processing_thread = threading.Thread(target=self.process_videos, args=(num_frames,))
+        self.processing_thread.daemon = True
+        self.processing_thread.start()
+
+    def process_videos(self, num_frames):
         try:
-            process_directory(self.folder_path, self.output_folder_path, num_frames)
-            messagebox.showinfo("Success", "Script ran successfully!")
+            # Get the list of videos in the folder
+            video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
+            video_files = [f for f in os.listdir(self.folder_path)
+                          if os.path.isfile(os.path.join(self.folder_path, f)) and 
+                          any(f.lower().endswith(ext) for ext in video_extensions)]
+            
+            total_videos = len(video_files)
+            
+            if total_videos == 0:
+                self.status_label.setText("No video files found in the selected folder")
+                self.run_button.setEnabled(True)
+                self.cancel_button.setEnabled(False)
+                return
+
+            self.loading_bar.setMaximum(total_videos)
+            processed_videos = 0
+            start_time = time.time()
+
+            # Process each video file
+            for filename in video_files:
+                if self.cancel_flag:
+                    break
+
+                # Update status
+                self.status_label.setText(f"Processing: {filename}")
+                filepath = os.path.join(self.folder_path, filename)
+
+                # Call the extract_frames function from frame_grabber.py
+                extract_frames(filepath, self.output_folder_path, num_frames)
+
+                processed_videos += 1
+
+                # Update progress on the main thread
+                self.update_progress(processed_videos, total_videos, start_time)
+
+            if not self.cancel_flag:
+                self.show_completion_message("Success", "All videos processed successfully!")
+            else:
+                self.show_completion_message("Cancelled", "Process was cancelled.")
+        
         except Exception as e:
-            messagebox.showerror("Error", f"An error occurred: {str(e)}")
+            self.show_completion_message("Error", f"An error occurred: {str(e)}")
+
+    def update_progress(self, processed_videos, total_videos, start_time):
+        self.loading_bar.setValue(processed_videos)
+        
+        # Calculate the percentage of completion
+        percentage = (processed_videos / total_videos) * 100
+        self.percentage_label.setText(f"{percentage:.1f}%")
+        
+        # Estimate remaining time
+        if processed_videos > 0:
+            elapsed_time = time.time() - start_time
+            avg_time_per_video = elapsed_time / processed_videos
+            remaining_time = avg_time_per_video * (total_videos - processed_videos)
+            remaining_minutes, remaining_seconds = divmod(remaining_time, 60)
+            self.estimated_time_label.setText(f"Est. Time Remaining: {int(remaining_minutes)}m {int(remaining_seconds)}s")
+
+    def show_completion_message(self, title, message):
+        QMessageBox.information(self, title, message)
+        self.status_label.setText("")
+        self.run_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self.loading_bar.setValue(0)
+        self.percentage_label.setText("0%")
+        self.estimated_time_label.setText("Estimated Time Remaining: N/A")
+
+    def show_error(self, message):
+        QMessageBox.critical(self, "Error", message)
+
+    def cancel_process(self):
+        self.cancel_flag = True
+        self.status_label.setText("Cancelling... Please wait")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = VideoScriptApp(root)
-    root.mainloop()
-
+    app = QApplication(sys.argv)
+    ex = VideoScriptApp()
+    ex.show()
+    sys.exit(app.exec_())
